@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dynamics 365 CRM for Missive</title>
+
+  <!-- Missive styling -->
+  <link rel="stylesheet" href="https://integrations.missiveapp.com/missive.css">
+  <script src="https://integrations.missiveapp.com/js/sdk.js"></script>
+  <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:12px}
+    .card{border:1px solid #e0e0e0;border-radius:8px;padding:10px;margin-bottom:8px}
+    .title{font-weight:600}
+    .small{font-size:12px;color:#666}
+    .btn{background:#0078d4;color:#fff;border:none;border-radius:4px;padding:6px 10px;font-size:12px;cursor:pointer}
+    .btn:hover{opacity:.9}
+    #loading{text-align:center;margin-top:20px}
+  </style>
+</head>
+<body>
+  <div id="loading">Connecting to Dynamics 365…</div>
+  <div id="content" style="display:none"></div>
+
+<script>
+/* ========= CONFIG ========= */
+const CONFIG = {
+  d365BaseUrl: "https://orgc52882f8.crm.dynamics.com",   // <-- your org base URL
+  tenantId: "577d8419-3be9-41e2-b4f6-97cc5bd1ec18",
+  clientId: "0e85f610-f6d0-4c03-87da-e5a5598b6961"
+};
+/* ========================== */
+
+const msalApp = new msal.PublicClientApplication({
+  auth: {
+    clientId: CONFIG.clientId,
+    authority: `https://login.microsoftonline.com/${CONFIG.tenantId}`,
+    redirectUri: window.location.origin
+  }
+});
+
+async function getToken() {
+  const scopes = [`${CONFIG.d365BaseUrl}/.default`];
+  let account = msalApp.getAllAccounts()[0];
+  if (!account) await msalApp.loginPopup({ scopes });
+  try {
+    const res = await msalApp.acquireTokenSilent({ scopes, account: msalApp.getAllAccounts()[0] });
+    return res.accessToken;
+  } catch {
+    const res = await msalApp.acquireTokenPopup({ scopes });
+    return res.accessToken;
+  }
+}
+
+async function queryD365(entity, filter, token) {
+  const r = await fetch(`${CONFIG.d365BaseUrl}/api/data/v9.2/${entity}?$filter=${filter}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return r.json();
+}
+
+async function loadCRM(email) {
+  document.getElementById("loading").textContent = `Searching Dynamics 365 for ${email}…`;
+  const token = await getToken();
+
+  const contacts = await queryD365("contacts", `emailaddress1 eq '${email}'`, token);
+  if (!contacts.value.length) {
+    document.getElementById("loading").textContent = "No contact found in Dynamics 365.";
+    return;
+  }
+
+  const c = contacts.value[0];
+  const accountName = c["_parentcustomerid_value@OData.Community.Display.V1.FormattedValue"] || "—";
+  const contactId = c.contactid;
+
+  // opportunities for that contact
+  const opps = await queryD365("opportunities", `_parentcontactid_value eq ${contactId}`, token);
+
+  let html = `
+    <div class="card">
+      <div class="title">${c.fullname}</div>
+      <div class="small">${c.emailaddress1}</div>
+      <div class="small">Account · ${accountName}</div>
+      <div class="small">Stage · ${c.cr78a_contactstage || "—"}</div>
+      <button class="btn" onclick="window.open('${CONFIG.d365BaseUrl}/main.aspx?etn=contact&id=${contactId}','_blank')">Open in D365 ↗</button>
+    </div>`;
+
+  if (opps.value.length) {
+    html += `<div class="card"><div class="title">Opportunities</div>`;
+    opps.value.forEach(o => {
+      html += `<div class="small">• ${o.name || "(Unnamed)"} — ${o["stepname"] || ""}</div>`;
+    });
+    html += `</div>`;
+  }
+
+  document.getElementById("content").innerHTML = html;
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("content").style.display = "block";
+}
+
+async function initMissive() {
+  await Missive.initialize();
+  Missive.on("change:conversations", async ids => {
+    if (!ids.length) return;
+    const convs = await Missive.fetchConversations(ids);
+    const email = convs[0].latest_message.from_field.address;
+    document.getElementById("content").style.display="none";
+    document.getElementById("loading").style.display="block";
+    await loadCRM(email);
+  });
+
+  const conv = await Missive.fetchConversations();
+  if (conv?.length) {
+    const email = conv[0].latest_message.from_field.address;
+    await loadCRM(email);
+  } else {
+    document.getElementById("loading").textContent = "Select a conversation to view CRM data.";
+  }
+}
+
+initMissive();
+</script>
+</body>
+</html>
