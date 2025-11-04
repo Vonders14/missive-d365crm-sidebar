@@ -171,7 +171,17 @@ async function initMissive() {
 }
 
 // Start the app
-initMissive();
-</script>
-</body>
-</html>
+// ✅ Safer Missive initialization that waits until Missive is ready
+function waitForMissive(retries = 10) {
+  if (typeof Missive !== "undefined" && Missive.initialize) {
+    console.log("Missive SDK detected, initializing...");
+    initMissive();
+  } else if (retries > 0) {
+    console.log("Waiting for Missive SDK...");
+    setTimeout(() => waitForMissive(retries - 1), 500);
+  } else {
+    showError("This app must be opened within Missive. Please add it as an integration in Missive.");
+  }
+}
+
+window.addEventListener("load", () => waitForMissive()); 
