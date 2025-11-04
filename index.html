@@ -36,7 +36,7 @@ const CONFIG = {
 
 function showError(msg) {
   console.error(msg);
-  document.getElementById("loading").innerHTML = `<div class="error">Error: ${msg}</div>`;
+  document.getElementById("loading").innerHTML = `<div class="error">Error: ${msg}<br><small>Check browser console (F12) for details</small></div>`;
 }
 
 const msalApp = new msal.PublicClientApplication({
@@ -77,7 +77,8 @@ async function queryD365(entity, filter, token) {
     });
     
     if (!r.ok) {
-      throw new Error(`D365 API returned ${r.status}: ${r.statusText}`);
+      const errorText = await r.text();
+      throw new Error(`D365 API returned ${r.status}: ${errorText}`);
     }
     
     return await r.json();
@@ -89,6 +90,7 @@ async function queryD365(entity, filter, token) {
 
 async function loadCRM(email) {
   try {
+    console.log("Loading CRM data for:", email);
     document.getElementById("loading").textContent = `Searching Dynamics 365 for ${email}…`;
     const token = await getToken();
 
@@ -133,15 +135,14 @@ async function loadCRM(email) {
 
 async function initMissive() {
   try {
-    // Check if Missive SDK is available
-    if (typeof Missive === 'undefined') {
-      showError("This app must be opened within Missive. Please add it as an integration in Missive.");
-      return;
-    }
-
+    console.log("Initializing Missive integration...");
+    console.log("Missive SDK available:", typeof Missive !== 'undefined');
+    
     await Missive.initialize();
+    console.log("Missive initialized successfully");
     
     Missive.on("change:conversations", async ids => {
+      console.log("Conversation changed:", ids);
       if (!ids.length) return;
       try {
         const convs = await Missive.fetchConversations(ids);
@@ -153,11 +154,13 @@ async function initMissive() {
           await loadCRM(email);
         }
       } catch (error) {
+        console.error("Error handling conversation change:", error);
         showError(`Failed to load conversation: ${error.message}`);
       }
     });
 
     const conv = await Missive.fetchConversations();
+    console.log("Current conversations:", conv);
     if (conv && conv.length > 0 && conv[0].latest_message && conv[0].latest_message.from_field) {
       const email = conv[0].latest_message.from_field.address;
       await loadCRM(email);
@@ -170,18 +173,12 @@ async function initMissive() {
   }
 }
 
-// Start the app
-// ✅ Safer Missive initialization that waits until Missive is ready
-function waitForMissive(retries = 10) {
-  if (typeof Missive !== "undefined" && Missive.initialize) {
-    console.log("Missive SDK detected, initializing...");
-    initMissive();
-  } else if (retries > 0) {
-    console.log("Waiting for Missive SDK...");
-    setTimeout(() => waitForMissive(retries - 1), 500);
-  } else {
-    showError("This app must be opened within Missive. Please add it as an integration in Missive.");
-  }
+// Wait for DOM and scripts to load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initMissive);
+} else {
+  initMissive();
 }
-
-window.addEventListener("load", () => waitForMissive()); 
+</script>
+</body>
+</html>
